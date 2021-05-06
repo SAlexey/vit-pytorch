@@ -1,14 +1,11 @@
 import torch
-from torch.utils.data import Dataset, DataLoader, IterableDataset, RandomSampler
+from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
 import json
-from argparse import Namespace
-from tqdm import tqdm
-from pycocotools.coco import COCO
+
 import SimpleITK as sitk
 from scipy import ndimage
-from einops import repeat
 
 
 class MRIDatasetBase(object):
