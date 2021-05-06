@@ -22,14 +22,14 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr_drop_step", type=int, default=50)
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
-
+    parser.add_argument("--window", type=int, default=100)
     args = parser.parse_args()
     return args
 
 
 def main(args):
 
-    root = "/scratch/visual/ashestak/oai/v00/data/"
+    root = "/scratch/htc/ashestak/oai/v00/data/"
 
     dataset_train = DICOMDatasetMasks(
         root, os.path.join(root, "annotations", "train.json")
@@ -37,12 +37,12 @@ def main(args):
 
     # limit number of training images
 
-    dataset_train.keys = dataset_train.keys[:100]
+    dataset_train.keys = dataset_train.keys[:2]
 
     dataset_val = DICOMDatasetMasks(root, os.path.join(root, "annotations", "val.json"))
 
     # limit number of val images
-    dataset_val.keys = dataset_val.keys[:100]
+    dataset_val.keys = dataset_val.keys[:2]
 
     model = resnet18_3d()
 
@@ -68,7 +68,7 @@ def main(args):
     )
 
     epochs = args.num_epochs
-    window = 20
+    window = args.window
     windowed_loss = deque(maxlen=window)
 
     output_dir = Path("/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d")
@@ -101,8 +101,8 @@ def main(args):
             loss_value = loss.detach().item()
             windowed_loss.append(loss_value)
 
-            if step % window == 0:
-                logger.add_scalar("loss", np.mean(loss), global_step=step)
+            if step % window == 0 and step != 0:
+                logger.add_scalar("loss", np.mean(windowed_loss), global_step=step)
 
             total_loss += loss_value
             num_steps += step
@@ -118,7 +118,7 @@ def main(args):
 
             for step, (img, tgt) in enumerate(dataloader_val):
 
-                img = img.float().to_device()
+                img = img.float().to(device)
                 tgt = tgt.to(device)
                 out = model(img)
 
@@ -140,15 +140,15 @@ def main(args):
 
         scheduler.step()
 
-    torch.save(
-        {
-            "epoch": epoch,
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "scheduler": scheduler.state_dict(),
-        },
-        output_dir / "checkpoint.ckpt",
-    )
+        torch.save(
+            {
+                "epoch": epoch,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            },
+            output_dir / "checkpoint.ckpt",
+        )
 
 
 if __name__ == "__main__":
