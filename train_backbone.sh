@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#SBATCH -A gpu
-#SBATCH -p highGPU
+#SBATCH -p gpu
 #SBATCH --time=12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
