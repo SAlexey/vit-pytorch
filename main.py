@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from data.mri import build_mri, build_dicom
+from data.mri import build_mri, build_dicomu
 
 
 def parse_args(parser: ArgumentParser):
