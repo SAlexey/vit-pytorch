@@ -6,6 +6,7 @@ import json
 
 import SimpleITK as sitk
 from scipy import ndimage
+from sklearn.model_selection import train_test_split
 
 
 class MRIDatasetBase(object):
@@ -67,14 +68,22 @@ class DICOMDatasetMasks(DICOMDataset):
                     (zs.start + zs.stop) / 2.0,
                     xs.stop - xs.start,
                     ys.stop - ys.start,
-                    zs.stop - ys.start,
+                    zs.stop - zs.start,
                 ]
                 boxes.append(box)
 
         mask = torch.from_numpy(mask)
         boxes = torch.as_tensor(boxes) / torch.as_tensor(mask.shape).repeat(1, 2)
 
-        return mask.unsqueeze(0), boxes
+        tgt = {"image_id": torch.as_tensor(ann.get("image_id")), "boxes": boxes}
+
+        return mask.unsqueeze(0), tgt
+
+
+class MOAKSDataset(MRIDatasetBase, Dataset):
+    def __init__(self, root, anns, transforms=None):
+        self.root = root
+        self.transform = transforms
 
 
 class MRIDataset(MRIDatasetBase, Dataset):
@@ -143,16 +152,6 @@ class MRIDataset(MRIDatasetBase, Dataset):
 
         # for k, ann in self.anns.items():
 
-        coco = COCO()
-        coco.dataset = {
-            "info": info,
-            "images": imgs,
-            "annotations": anns,
-            "categories": cats,
-        }
-
-        return coco
-
 
 def make_mri_transforms(image_set):
 
@@ -187,6 +186,10 @@ def make_mri_transforms(image_set):
         )
 
 
+def build_moaks(image_set, args):
+    pass
+
+
 def build_mri(image_set, args):
 
     root = Path(args.root)
@@ -205,9 +208,9 @@ def build_mri(image_set, args):
 
 if __name__ == "__main__":
 
-    root = "/scratch/visual/ashestak/oai/v00/data/"
-    anns = "/scratch/visual/ashestak/oai/v00/data/annotations/val.json"
-    dataset = DICOMDatasetMasks(root, anns)
+    root = "/scratch/visual/ashestak/oai/v00/data/inputs/train"
+    anns = "/scratch/visual/ashestak/oai/v00/data/moaks/val.json"
+    dataset = MRIDataset(root, anns)
     img, tgt = next(iter(dataset))
     print(img.shape)
     print(tgt)
