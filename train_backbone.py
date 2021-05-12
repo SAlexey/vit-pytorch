@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument("--lr_drop_step", type=int, default=50)
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
     parser.add_argument("--resume", type=str, default="")
+    parser.add_argument("--window", type=int, default=100)
     args = parser.parse_args()
     return args
 
@@ -73,7 +74,7 @@ def main(args):
         start = ckpt["epoch"] + 1
 
     epochs = args.num_epochs
-    window = 20
+    window = args.window
     windowed_loss = deque(maxlen=window)
 
     output_dir = Path("/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d")

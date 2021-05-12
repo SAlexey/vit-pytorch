@@ -12,7 +12,7 @@ def parse_args(parser: ArgumentParser):
     # * Dataset
 
     parser.add_argument(
-        "--root", type=str, default="/scratch/visual/ashestak/oai/v00/data"
+        "--root", type=str, default="/scratch/htc/ashestak/oai/v00/data"
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--num_workers", type=int, default=2)
