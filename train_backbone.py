@@ -4,14 +4,14 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from backbone.resnets import resnet18_3d
-from data.mri import DICOMDatasetMasks
+from medical.data.oai import DICOMDatasetMasks
 import os
 import torch.nn.functional as F
 from collections import deque
 from argparse import ArgumentParser
 from pathlib import Path
 import json
-
+import time
 
 def parse_args():
     parser = ArgumentParser()
@@ -22,29 +22,23 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr_drop_step", type=int, default=50)
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
-
+    parser.add_argument("--resume", type=str, default="")
     args = parser.parse_args()
     return args
 
 
 def main(args):
+    root_data = "/scratch/htc/bzftacka/"
+    root_anns = "/scratch/htc/ashestak/oai/v00/moaks/"
 
-    root = "/scratch/visual/ashestak/oai/v00/data/"
+    dataset_train = DICOMDatasetMasks(root_data, os.path.join(root_anns, "train.json"))
+    print("Training data: ", len(dataset_train), flush=True)
 
-    dataset_train = DICOMDatasetMasks(
-        root, os.path.join(root, "annotations", "train.json")
-    )
-
-    # limit number of training images
-
-    dataset_train.keys = dataset_train.keys[:100]
-
-    dataset_val = DICOMDatasetMasks(root, os.path.join(root, "annotations", "val.json"))
-
-    # limit number of val images
-    dataset_val.keys = dataset_val.keys[:100]
-
+    dataset_val = DICOMDatasetMasks(root_data, os.path.join(root_anns, "val.json"))
+    print("Validation data: ", len(dataset_val), flush=True)
     model = resnet18_3d()
+    
+    print(model, flush=True)
 
     dataloader_train = DataLoader(
         dataset_train,
@@ -60,12 +54,23 @@ def main(args):
     )
 
     device = torch.device(args.device)
+
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, args.lr_drop_step, args.lr_drop_rate
     )
+
+    start = 0
+
+    if args.resume:
+        ckpt = torch.load(args.resume)
+        print("resuming from ", args.resume)
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        start = ckpt["epoch"] + 1
 
     epochs = args.num_epochs
     window = 20
@@ -80,11 +85,15 @@ def main(args):
 
     best_val_loss = np.inf
 
-    for epoch in range(epochs):
+    global_step = 0
 
+    for epoch in range(start, epochs):
+        
         total_loss = 0
         num_steps = 0
 
+        print(f"Epoch {epoch:03d}/{epochs:03d}", flush=True)
+        t0 = time.time()
         for step, (img, tgt) in enumerate(dataloader_train):
 
             img = img.float().to(device)
@@ -101,13 +110,19 @@ def main(args):
             loss_value = loss.detach().item()
             windowed_loss.append(loss_value)
 
-            if step % window == 0:
-                logger.add_scalar("loss", np.mean(loss), global_step=step)
+            if global_step and (global_step % window == 0):
+
+                logger.add_scalar("loss", np.mean(windowed_loss), global_step=global_step)
+                # logger.add_scalar("lr", optimizer.lr, global_step=global_step)
 
             total_loss += loss_value
-            num_steps += step
+            num_steps += 1
+            global_step += 1
+        
+        total_loss = total_loss / num_steps
+        logger.add_scalar("train_loss_epoch", total_loss, global_step=epoch)
 
-        logger.add_scalar("train_loss_epoch", total_loss / num_steps, global_step=epoch)
+        print(f"Time {(time.time() - t0):.4f} || Loss: {total_loss:.4f}")
 
         with torch.no_grad():
 
@@ -118,7 +133,7 @@ def main(args):
 
             for step, (img, tgt) in enumerate(dataloader_val):
 
-                img = img.float().to_device()
+                img = img.float().to(device)
                 tgt = tgt.to(device)
                 out = model(img)
 
@@ -139,16 +154,15 @@ def main(args):
                     json.dump({"epoch": epoch, "val_loss": best_loss}, fh)
 
         scheduler.step()
-
-    torch.save(
-        {
-            "epoch": epoch,
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "scheduler": scheduler.state_dict(),
-        },
-        output_dir / "checkpoint.ckpt",
-    )
+        torch.save(
+            {
+                "epoch": epoch,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            },
+            output_dir / "checkpoint.ckpt",
+        )
 
 
 if __name__ == "__main__":
