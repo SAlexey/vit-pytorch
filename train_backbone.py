@@ -23,13 +23,14 @@ def parse_args():
     parser.add_argument("--lr_drop_step", type=int, default=50)
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
     parser.add_argument("--window", type=int, default=100)
+    parser.add_argument("--resume", type=str, default="")
     args = parser.parse_args()
     return args
 
 
 def main(args):
 
-    root = "/scratch/htc/ashestak/oai/v00/data/"
+    root = "/scratch/visual/ashestak/oai/v00/data/"
 
     dataset_train = DICOMDatasetMasks(
         root, os.path.join(root, "annotations", "train.json")
@@ -37,12 +38,12 @@ def main(args):
 
     # limit number of training images
 
-    dataset_train.keys = dataset_train.keys[:2]
+    dataset_train.keys = dataset_train.keys[:10]
 
     dataset_val = DICOMDatasetMasks(root, os.path.join(root, "annotations", "val.json"))
 
     # limit number of val images
-    dataset_val.keys = dataset_val.keys[:2]
+    dataset_val.keys = dataset_val.keys[:10]
 
     model = resnet18_3d()
 
@@ -66,12 +67,20 @@ def main(args):
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, args.lr_drop_step, args.lr_drop_rate
     )
-
+    start = 0
     epochs = args.num_epochs
     window = args.window
     windowed_loss = deque(maxlen=window)
 
-    output_dir = Path("/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d")
+    if args.resume:
+
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        scheduler.load_state_dict(checkpoint["scheduler"])
+        start = checkpoint["epoch"] + 1
+
+    output_dir = Path("/scratch/visual/ashestak/vit-pytorch/outputs/resnet18_3d")
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -80,12 +89,14 @@ def main(args):
 
     best_val_loss = np.inf
 
-    for epoch in range(epochs):
+    for epoch in range(start, epochs):
 
         total_loss = 0
         num_steps = 0
 
         for step, (img, tgt) in enumerate(dataloader_train):
+
+            step += epoch
 
             img = img.float().to(device)
             tgt = tgt.to(device)
@@ -117,6 +128,8 @@ def main(args):
             num_steps = 0
 
             for step, (img, tgt) in enumerate(dataloader_val):
+
+                step += epoch
 
                 img = img.float().to(device)
                 tgt = tgt.to(device)
