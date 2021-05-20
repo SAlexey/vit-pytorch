@@ -7,14 +7,9 @@ from backbone.resnets import resnet18_3d
 from data.mri import DICOMDatasetMasks
 import os
 import torch.nn.functional as F
-from collections import deque
-from argparse import ArgumentParser
-from pathlib import Path
-import json
 from einops import rearrange, parse_shape, repeat
 from util.box_ops import box_cxcywh_to_xyxy, box_iou
 import matplotlib.pyplot as plt
-import nibabel as nib
 import sys
 
 #%%
@@ -22,18 +17,18 @@ def main():
 
     model = resnet18_3d()
     state_dict = torch.load(
-        "/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d/best_model.pt"
+        "/scratch/visual/ashestak/vit-pytorch/outputs/cluster/resnet18_3d/best_model.pt"
     )
     model.load_state_dict(state_dict)
     model.eval()
 
-    anns = "/scratch/htc/ashestak/oai/v00/data/moaks/test.json"
-    root = "/scratch/htc/bzftacka"
+    anns = "/scratch/visual/ashestak/oai/v00/data/moaks/test.json"
+    root = "/vis/scratchN/bzftacka/OAI_DESS_Data_AllTPs/Merged/"
     data = DICOMDatasetMasks(root, anns)
 
-    loader = DataLoader(data, batch_size=2, num_workers=2)
+    loader = DataLoader(data, batch_size=1, num_workers=2)
 
-    output_dir = "/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d"
+    output_dir = "/scratch/visual/ashestak/vit-pytorch/outputs/resnet18_3d"
 
     assert os.path.exists(output_dir)
 
@@ -42,12 +37,8 @@ def main():
     boxes_iou = []
     image_ids = []
 
-    i = 0
     with torch.no_grad():
-        for img, tgt in loader:
-
-            if i == 10:
-                break
+        for img, tgt in tqdm(loader):
 
             out_box = model(img.float()).sigmoid()
             tgt_box = tgt["boxes"]
@@ -80,22 +71,15 @@ def main():
             boxes_iou.append(ious)
             image_ids.append(tgt_ids)
 
-            i += 1
-
     boxes_out = rearrange(boxes_out, "list boxes coord -> (list boxes) coord")
     boxes_tgt = rearrange(boxes_tgt, "list boxes coord -> (list boxes) coord")
     boxes_iou = rearrange(boxes_iou, "list ious -> (list ious)")
     image_ids = rearrange(image_ids, "list ids -> (list ids)")
 
-    np.savez(
-        "test_results.npz",
-        {
-            "out_boxes": boxes_out.cpu().numpy(),
-            "tgt_boxes": boxes_tgt.cpu().numpy(),
-            "ious": boxes_iou.cpu().numpy(),
-            "image_ids": image_ids.cpu().numpy(),
-        },
-    )
+    np.save("outputs/test_results/boxes_out.npy", boxes_out.numpy())
+    np.save("outputs/test_results/boxes_tgt.npy", boxes_tgt.numpy())
+    np.save("outputs/test_results/boxes_iou.npy", boxes_iou.numpy())
+    np.save("outputs/test_results/image_ids.npy", image_ids.numpy())
 
     sys.exit(1)
 

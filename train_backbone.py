@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument("--window", type=int, default=100)
+    parser.add_argument("--resume", type=str, default="")
     args = parser.parse_args()
     return args
 
@@ -62,22 +63,20 @@ def main(args):
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, args.lr_drop_step, args.lr_drop_rate
     )
-
     start = 0
-
-    if args.resume:
-        ckpt = torch.load(args.resume)
-        print("resuming from ", args.resume)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
-        scheduler.load_state_dict(ckpt["scheduler"])
-        start = ckpt["epoch"] + 1
-
     epochs = args.num_epochs
     window = args.window
     windowed_loss = deque(maxlen=window)
 
-    output_dir = Path("/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d")
+    if args.resume:
+
+        checkpoint = torch.load(args.resume)
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        scheduler.load_state_dict(checkpoint["scheduler"])
+        start = checkpoint["epoch"] + 1
+
+    output_dir = Path("/scratch/visual/ashestak/vit-pytorch/outputs/resnet18_3d")
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +95,8 @@ def main(args):
         print(f"Epoch {epoch:03d}/{epochs:03d}", flush=True)
         t0 = time.time()
         for step, (img, tgt) in enumerate(dataloader_train):
+
+            step += epoch
 
             img = img.float().to(device)
             tgt = tgt.to(device)
@@ -133,6 +134,8 @@ def main(args):
             num_steps = 0
 
             for step, (img, tgt) in enumerate(dataloader_val):
+
+                step += epoch
 
                 img = img.float().to(device)
                 tgt = tgt.to(device)
