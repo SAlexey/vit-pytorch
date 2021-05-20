@@ -85,7 +85,7 @@ def resize_volume(img, size, tgt=None):
 
     zoom = (1, sx / ox, sy / oy, sz / oz)
 
-    img = F.interpolate(img.unsqueeze(0), size).squeeze(0)
+    img = torch.nn.functional.interpolate(img.unsqueeze(0), size).squeeze(0)
 
     if tgt is not None:
         _assert_tgt(tgt)

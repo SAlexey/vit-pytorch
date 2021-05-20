@@ -1,16 +1,19 @@
 import numpy as np
 import torch
+from torch import nn
 from torch.utils.data import DataLoader
+from data import transforms as T
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from backbone.resnets import resnet18_3d
-from data.mri import DICOMDatasetMasks
+from data.oai import MOAKSDataset
 import os
 import torch.nn.functional as F
-from collections import deque
+from collections import defaultdict, deque
 from argparse import ArgumentParser
 from pathlib import Path
 import json
+from math import ceil
 
 
 def parse_args():
@@ -28,31 +31,65 @@ def parse_args():
     return args
 
 
+def _step(loader, epoch):
+    total_steps = ceil(len(loader.dataset) / loader.batch_size)
+    for step, batch in enumerate(loader):
+        yield step, step + epoch * total_steps, batch
+
+
+class MixCriterion(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def loss_labels(self, out, tgt):
+        loss = F.binary_cross_entropy_with_logits(out, tgt.float())
+        return loss
+
+    def loss_boxes(self, out, tgt):
+        loss = F.l1_loss(out, tgt.flatten(1))
+        return loss
+
+    def forward(self, out, tgt):
+        losses = {}
+
+        for key in ("boxes", "labels"):
+
+            losses[key] = getattr(self, f"loss_{key}")(out[key], tgt[key])
+
+        return losses
+
+
 def main(args):
 
     root = "/scratch/visual/ashestak/oai/v00/data/"
 
-    dataset_train = DICOMDatasetMasks(
-        root, os.path.join(root, "annotations", "train.json")
+    train_transforms = T.Compose(
+        [T.ToTensor(), T.RandomResizedBBoxSafeCrop(), T.Normalize()]
     )
 
+    val_transforms = T.Compose([T.ToTensor(), T.Normalize()])
+
+    dataset_train = MOAKSDataset(
+        os.path.join(root, "inputs"),
+        os.path.join(root, "moaks", "train.json"),
+        transforms=train_transforms,
+    )
     # limit number of training images
-
-    dataset_train.keys = dataset_train.keys[:10]
-
-    dataset_val = DICOMDatasetMasks(root, os.path.join(root, "annotations", "val.json"))
-
-    # limit number of val images
-    dataset_val.keys = dataset_val.keys[:10]
-
-    model = resnet18_3d()
-
+    dataset_train.keys = dataset_train.keys[:4]
     dataloader_train = DataLoader(
         dataset_train,
         shuffle=True,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
     )
+
+    dataset_val = MOAKSDataset(
+        os.path.join(root, "inputs"),
+        os.path.join(root, "moaks", "val.json"),
+        transforms=val_transforms,
+    )
+    # limit number of val images
+    dataset_val.keys = dataset_val.keys[:4]
     dataloader_val = DataLoader(
         dataset_val,
         shuffle=False,
@@ -61,7 +98,8 @@ def main(args):
     )
 
     device = torch.device(args.device)
-    model = model.to(device)
+    model = resnet18_3d().to(device)
+    criterion = MixCriterion().to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(
@@ -70,7 +108,8 @@ def main(args):
     start = 0
     epochs = args.num_epochs
     window = args.window
-    windowed_loss = deque(maxlen=window)
+
+    metrics = defaultdict(lambda: deque([], maxlen=window))
 
     if args.resume:
 
@@ -80,7 +119,7 @@ def main(args):
         scheduler.load_state_dict(checkpoint["scheduler"])
         start = checkpoint["epoch"] + 1
 
-    output_dir = Path("/scratch/visual/ashestak/vit-pytorch/outputs/resnet18_3d")
+    output_dir = Path("/scratch/visual/ashestak/vit-pytorch/outputs/resnet18_3d_mri")
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -89,67 +128,80 @@ def main(args):
 
     best_val_loss = np.inf
 
+    weight_dict = {"boxes": 5, "labels": 1}
+
+    train_steps = ceil(len(dataset_train) / dataloader_train.batch_size)
+    val_steps = ceil(len(dataset_val) / dataloader_val.batch_size)
+
     for epoch in range(start, epochs):
 
         total_loss = 0
-        num_steps = 0
+        total_steps = 0
 
         for step, (img, tgt) in enumerate(dataloader_train):
 
-            step += epoch
-
-            img = img.float().to(device)
-            tgt = tgt.to(device)
+            global_step = step + epoch * train_steps
 
             out = model(img)
 
-            loss = F.l1_loss(out.sigmoid(), tgt.flatten(1))
+            loss_dict = criterion(out, tgt)
+            loss = sum(weight_dict[k] * loss_dict[k] for k in weight_dict)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            loss_value = loss.detach().item()
-            windowed_loss.append(loss_value)
+            loss_value = loss.detach().cpu().item()
 
-            if step % window == 0 and step != 0:
-                logger.add_scalar("loss", np.mean(windowed_loss), global_step=step)
+            metrics["loss"].append(loss_value)
+            for key, val in loss_dict.items():
+                metrics[key] = val.detach().item()
+
+            print(step)
+            print(step % window)
+
+            if step and (step % window == 0):
+                print(metrics)
+                for key, val in metrics.items():
+                    logger.add_scalar(key, np.mean(val), global_step=global_step)
 
             total_loss += loss_value
-            num_steps += step
+            total_steps += 1
 
-        logger.add_scalar("train_loss_epoch", total_loss / num_steps, global_step=epoch)
+        logger.add_scalar(
+            "train_loss_epoch", total_loss / total_steps, global_step=epoch
+        )
 
         with torch.no_grad():
 
             model.eval()
 
             total_loss = 0
-            num_steps = 0
+            total_steps = 0
 
             for step, (img, tgt) in enumerate(dataloader_val):
 
-                step += epoch
+                global_step = step + epoch * val_steps
 
-                img = img.float().to(device)
-                tgt = tgt.to(device)
                 out = model(img)
 
-                loss = F.l1_loss(out.sigmoid(), tgt.flatten(1))
-                total_loss += loss.item()
-                num_steps += 1
+                loss_dict = criterion(out, tgt)
+                loss_value = sum(weight_dict[k] * loss_dict[k] for k in weight_dict)
 
-            logger.add_scalar(
-                "val_loss_epoch", total_loss / num_steps, global_step=epoch
-            )
+                total_loss += loss_value
+                total_steps += 1
 
-            if (best_loss := total_loss / num_steps) < best_val_loss:
-                best_val_loss = best_loss
+            epoch_loss = total_loss / total_steps
+
+            logger.add_scalar("val_loss_epoch", epoch_loss, global_step=epoch)
+
+            if epoch_loss < best_val_loss:
+                best_val_loss = epoch_loss
 
                 torch.save(model.state_dict(), output_dir / "best_model.pt")
 
                 with open(output_dir / "best_model.json", "w") as fh:
-                    json.dump({"epoch": epoch, "val_loss": best_loss}, fh)
+                    json.dump({"epoch": epoch, "val_loss": best_val_loss.item()}, fh)
 
         scheduler.step()
 

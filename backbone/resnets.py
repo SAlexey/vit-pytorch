@@ -105,7 +105,8 @@ class ResNet3D(nn.Module):
             block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2]
         )
         self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        self.ffn = MLP(512, 1024, 12, 3)
+        self.linear_bbox = MLP(512, 1024, 12, 3)
+        self.linear_class = nn.Linear(512, 2)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -185,9 +186,13 @@ class ResNet3D(nn.Module):
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.ffn(x)
 
-        return x
+        out = {
+            "boxes": self.linear_bbox(x).sigmoid(),
+            "labels": self.linear_class(x),
+        }
+
+        return out
 
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
