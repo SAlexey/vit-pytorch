@@ -25,16 +25,11 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr_drop_step", type=int, default=50)
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
+    parser.add_argument("--resume", type=str, default="")
     parser.add_argument("--window", type=int, default=100)
     parser.add_argument("--resume", type=str, default="")
     args = parser.parse_args()
     return args
-
-
-def _step(loader, epoch):
-    total_steps = ceil(len(loader.dataset) / loader.batch_size)
-    for step, batch in enumerate(loader):
-        yield step, step + epoch * total_steps, batch
 
 
 class MixCriterion(nn.Module):
@@ -61,7 +56,7 @@ class MixCriterion(nn.Module):
 
 def main(args):
 
-    root = "/scratch/visual/ashestak/oai/v00/data/"
+    root = "/scratch/htc/ashestak/oai/v00/data/"
 
     train_transforms = T.Compose(
         [T.ToTensor(), T.RandomResizedBBoxSafeCrop(), T.Normalize()]
@@ -119,7 +114,7 @@ def main(args):
         scheduler.load_state_dict(checkpoint["scheduler"])
         start = checkpoint["epoch"] + 1
 
-    output_dir = Path("/scratch/visual/ashestak/vit-pytorch/outputs/resnet18_3d_mri")
+    output_dir = Path("/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d_mri")
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +133,7 @@ def main(args):
         total_loss = 0
         total_steps = 0
 
+        print(f"Epoch {epoch:03d}/{epochs:03d}", flush=True)
         for step, (img, tgt) in enumerate(dataloader_train):
 
             global_step = step + epoch * train_steps
@@ -204,7 +200,6 @@ def main(args):
                     json.dump({"epoch": epoch, "val_loss": best_val_loss.item()}, fh)
 
         scheduler.step()
-
         torch.save(
             {
                 "epoch": epoch,
