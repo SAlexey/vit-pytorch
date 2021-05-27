@@ -153,7 +153,9 @@ def random_bbox_safe_crop(img, tgt):
 
 class ToTensor(object):
     def __call__(self, img, tgt=None):
-        img = torch.as_tensor(img).float()
+
+        img = torch.as_tensor(img)
+
         if tgt is not None:
             if isinstance(tgt, dict):
                 tgt = tgt.copy()
@@ -166,10 +168,17 @@ class ToTensor(object):
 
 
 class Normalize(object):
-    def __call__(self, img, tgt=None, mean=(0.485,), std=(0.229,)):
+    def __init__(self, mean=(0.485,), std=(0.229,)) -> None:
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, img, tgt=None):
+
+        mean = torch.as_tensor(self.mean)
+        std = torch.as_tensor(self.std)
 
         img = img / img.max()
-        img = (img - torch.as_tensor(mean)) / torch.as_tensor(std)
+        img = (img - mean) / std
 
         if tgt is not None:
 

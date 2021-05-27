@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
 import json
+import torch.nn.functional as F
 
 import SimpleITK as sitk
 from scipy import ndimage
@@ -33,10 +34,7 @@ class DatasetBase(Dataset):
     """
 
     def __init__(
-        self,
-        root,
-        anns,
-        transforms=None,
+        self, root, anns, transforms=None,
     ):
         self.root = root
         with open(anns) as fh:
@@ -142,4 +140,25 @@ class MOAKSDataset(DatasetBase):
             img = img.flip(1)
             tgt["boxes"] = tgt["boxes"].flip(0)
             tgt["labels"] = tgt["labels"].flip(0)
+        return img, tgt
+
+
+class MOAKSDatasetMultilabel(MOAKSDataset):
+    def _get_target(self, key):
+        tgt = super()._get_target(key)
+        ann = self.anns[key]
+        tgt["labels"] = [
+            [ann["V00MMTMA"], ann["V00MMTMB"], ann["V00MMTMP"],],
+            [ann["V00MMTLA"], ann["V00MMTLB"], ann["V00MMTLP"],],
+        ]
+        return tgt
+
+    def __getitem__(self, idx):
+        img, tgt = super().__getitem__(idx)
+
+        # convert labels to one-hot-vector
+
+        labels = tgt["labels"]
+        labels[labels==1] = 0 # ignore signal abnormalities
+        tgt["labels"] = F.one_hot(labels)
         return img, tgt

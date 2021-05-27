@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from data import transforms as T
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from backbone.resnets import resnet18_3d
+from backbone.resnets import resnet18_3d, resnet50_3d
 from data.oai import MOAKSDataset
 import os
 import torch.nn.functional as F
@@ -19,15 +19,26 @@ from math import ceil
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--num_workers", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_epochs", type=int, default=100)
+    parser.add_argument("--num_workers", type=int, default=5)
+    parser.add_argument("--num_classes", type=int, deffault=2)
+    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr_drop_step", type=int, default=50)
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
-    parser.add_argument("--resume", type=str, default="")
+    parser.add_argument(
+        "--resume", type=str, default="", help="checkpoinnt path to resume from"
+    )
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="",
+        help="path to model weights (ignores 'model' key in checkpoint)",
+    )
     parser.add_argument("--window", type=int, default=100)
-    parser.add_argument("--resume", type=str, default="")
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--log_dir", type=str, default="")
+    parser.add_argument("--output_dir", type=str, default="outputs/backbone")
     args = parser.parse_args()
     return args
 
@@ -47,7 +58,7 @@ class MixCriterion(nn.Module):
     def forward(self, out, tgt):
         losses = {}
 
-        for key in ("boxes", "labels"):
+        for key in ("labels",):
 
             losses[key] = getattr(self, f"loss_{key}")(out[key], tgt[key])
 
@@ -56,7 +67,7 @@ class MixCriterion(nn.Module):
 
 def main(args):
 
-    root = "/scratch/htc/ashestak/oai/v00/data/"
+    root = "/scratch/htc/ashestak/oai/v00/"
 
     train_transforms = T.Compose(
         [T.ToTensor(), T.RandomResizedBBoxSafeCrop(), T.Normalize()]
@@ -65,12 +76,12 @@ def main(args):
     val_transforms = T.Compose([T.ToTensor(), T.Normalize()])
 
     dataset_train = MOAKSDataset(
-        os.path.join(root, "inputs"),
+        os.path.join(root, "data/inputs"),
         os.path.join(root, "moaks", "train.json"),
         transforms=train_transforms,
     )
     # limit number of training images
-    dataset_train.keys = dataset_train.keys[:4]
+    # dataset_train.keys = dataset_train.keys[:4]
     dataloader_train = DataLoader(
         dataset_train,
         shuffle=True,
@@ -79,12 +90,12 @@ def main(args):
     )
 
     dataset_val = MOAKSDataset(
-        os.path.join(root, "inputs"),
+        os.path.join(root, "data/inputs"),
         os.path.join(root, "moaks", "val.json"),
         transforms=val_transforms,
     )
     # limit number of val images
-    dataset_val.keys = dataset_val.keys[:4]
+    # dataset_val.keys = dataset_val.keys[:4]
     dataloader_val = DataLoader(
         dataset_val,
         shuffle=False,
@@ -93,8 +104,10 @@ def main(args):
     )
 
     device = torch.device(args.device)
-    model = resnet18_3d().to(device)
+    model = resnet50_3d(num_classes=args.num_classes).to(device)
     criterion = MixCriterion().to(device)
+
+    # criterion = F.binary_cross_entropy_with_logits
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.StepLR(
@@ -106,35 +119,45 @@ def main(args):
 
     metrics = defaultdict(lambda: deque([], maxlen=window))
 
+    if args.weights:
+        state_dict = torch.load(args.weights)
+        model.load_state_dict(state_dict)
+
     if args.resume:
 
         checkpoint = torch.load(args.resume)
-        model.load_state_dict(checkpoint["model"])
+        if not args.weights:
+            model.load_state_dict(checkpoint["model"])
+
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
         start = checkpoint["epoch"] + 1
 
-    output_dir = Path("/scratch/htc/ashestak/vit-pytorch/outputs/resnet18_3d_mri")
+    output_dir = Path(args.output_dir)
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = SummaryWriter()
-
     best_val_loss = np.inf
 
-    weight_dict = {"boxes": 5, "labels": 1}
+    weight_dict = {"labels": 1}
 
     train_steps = ceil(len(dataset_train) / dataloader_train.batch_size)
     val_steps = ceil(len(dataset_val) / dataloader_val.batch_size)
 
+    logger = SummaryWriter()
     for epoch in range(start, epochs):
+        print(f"Epoch {epoch:03d}/{epochs:03d}", flush=True)
 
         total_loss = 0
         total_steps = 0
 
-        print(f"Epoch {epoch:03d}/{epochs:03d}", flush=True)
+        model.train()
+
         for step, (img, tgt) in enumerate(dataloader_train):
+
+            img = img.to(device)
+            tgt = {k: v.to(device) for k, v in tgt.items()}
 
             global_step = step + epoch * train_steps
 
@@ -151,13 +174,9 @@ def main(args):
 
             metrics["loss"].append(loss_value)
             for key, val in loss_dict.items():
-                metrics[key] = val.detach().item()
-
-            print(step)
-            print(step % window)
+                metrics[key] = val.detach().cpu().item()
 
             if step and (step % window == 0):
-                print(metrics)
                 for key, val in metrics.items():
                     logger.add_scalar(key, np.mean(val), global_step=global_step)
 
@@ -176,6 +195,9 @@ def main(args):
             total_steps = 0
 
             for step, (img, tgt) in enumerate(dataloader_val):
+
+                img = img.to(device)
+                tgt = {k: v.to(device) for k, v in tgt.items()}
 
                 global_step = step + epoch * val_steps
 
