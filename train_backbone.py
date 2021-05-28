@@ -19,9 +19,9 @@ from math import ceil
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--num_epochs", type=int, default=100)
+    parser.add_argument("--num_epochs", type=int, default=300)
     parser.add_argument("--num_workers", type=int, default=5)
-    parser.add_argument("--num_classes", type=int, default=2)
+    parser.add_argument("--num_classes", type=int, default=6)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr_drop_step", type=int, default=50)
@@ -115,7 +115,8 @@ def main(args):
     )
 
     device = torch.device(args.device)
-    model = Net2("resnet50_3d", num_classes=args.num_classes).to(device)
+    # TODO:  better network initializationwith args
+    model = Net2("resnet50_3d", dropout=args.dropout).to(device)
     criterion = MixCriterion().to(device)
 
     # criterion = F.binary_cross_entropy_with_logits
