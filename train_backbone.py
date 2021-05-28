@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--log_dir", type=str, default="")
     parser.add_argument(
-        "--data_dir", type=str, default="/scratch/htc/ashestak/oai/v00/inputs"
+        "--data_dir", type=str, default="/scratch/htc/ashestak/oai/v00/data/inputs"
     )
     parser.add_argument(
         "--anns_dir", type=str, default="/scratch/htc/ashestak/oai/v00/data/moaks"
