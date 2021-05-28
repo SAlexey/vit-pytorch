@@ -4,6 +4,7 @@ from torch.tensor import Tensor
 from torchvision.models.resnet import ResNet, BasicBlock
 from typing import Type, Any, Callable, Union, List, Optional
 import torch.nn.functional as F
+import einops as E
 
 
 def conv3x3x3(
@@ -114,6 +115,14 @@ class Bottleneck3D(nn.Module):
         out = self.relu(out)
 
         return out
+
+
+def resnet18_3d(*, block=BasicBlock3D, norm_layer=nn.BatchNorm3d, **kwargs) -> ResNet:
+    return ResNet3D(block, [2, 2, 2, 2], norm_layer=norm_layer, **kwargs)
+
+
+def resnet50_3d(*, block=Bottleneck3D, norm_layer=nn.BatchNorm3d, **kwargs) -> ResNet:
+    return ResNet3D(block, [3, 4, 6, 3], norm_layer=norm_layer, **kwargs)
 
 
 class ResNet3D(nn.Module):
@@ -254,10 +263,81 @@ class ResNet3D(nn.Module):
         return self._forward_impl(x)
 
 
-class MultilabelNet(nn.Module):
-    def __init__(self, num_objects, num_classes):
-        super().__init__(self)
-        pass
+CONFIG = {"resnet18_3d": (resnet18_3d, 512), "resnet50_3d": (resnet50_3d, 2048)}
+
+
+class Net1(nn.Module):
+    """
+    Detects menisci and classifies them in a binary manner (healthy vs diseased)
+
+    Outputs: a dictionary with keys
+        - boxes: tensor[12] box coordinates in cxcywh format
+        - labels: tebsor[2] probabilities of diseased menisci
+    """
+
+    def __init__(self, backbone: str, *args, **kwargs):
+        assert backbone in CONFIG, f"unknown backbone: {backbone}"
+        super().__init__()
+
+        init, num_channels = CONFIG[backbone]
+        self.backbone = init(*args, **kwargs)
+
+        self.out_boxes = MLP(num_channels, 2048, 12, 3)
+        self.out_labels = nn.Linear(num_channels, 2)
+
+    def forward(self, x):
+        feat = self.backbone(x)
+        boxes = self.out_boxes(feat).sigmoid()
+        labels = self.out_labels(feat)
+
+        return {"boxes": boxes, "labels": labels}
+
+
+class Net2(nn.Module):
+    """
+    Detects menisci and classifies them in a multilabel & multiclass manner (MOAKS)
+
+    Outputs: a dictionary with keys
+        - boxes: tensor[12] box coordinates in cxcywh format
+    """
+
+    def __init__(self, backbone: str, *args, **kwargs):
+        assert backbone in CONFIG, f"unknown backbone: {backbone}"
+        super().__init__()
+
+        init, num_channels = CONFIG[backbone]
+        self.backbone = init(*args, **kwargs)
+
+        self._num_objects = 2  # number of menisci (med, lat)
+        self._num_labels = 3  # number of parts permeniscus (A.Horn, Body, P.Horn)
+        self._num_classes = 6  # number of classes per part (MOAKS)
+
+        self.out_boxes = MLP(num_channels, 2048, 12, 3)
+        self.out_labels = MLP(
+            num_channels,
+            2048,
+            self._num_objects * self._num_labels * self._num_classes,
+            3,
+        )
+
+    def forward(self, x):
+        x = self.backbone(x)
+
+        labels = E.rearrange(
+            self.out_labels(x),
+            "1 (cls objs ls) -> 1 cls objs ls",
+            objs=self._num_objects,
+            ls=self._num_labels,
+            cls=self._num_classes,
+        )
+
+        boxes = E.rearrange(
+            self.out_boxes(x).sigmoid(),
+            "1 (boxes coords) -> 1 boxes coords",
+            boxes=self._num_objects,
+        )
+
+        return {"boxes": boxes, "labels": labels}
 
 
 class MLP(nn.Module):
@@ -275,14 +355,6 @@ class MLP(nn.Module):
         for i, layer in enumerate(self.layers):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
-
-
-def resnet18_3d(*, block=BasicBlock3D, norm_layer=nn.BatchNorm3d, **kwargs) -> ResNet:
-    return ResNet3D(block, [2, 2, 2, 2], norm_layer=norm_layer, **kwargs)
-
-
-def resnet50_3d(*, block=Bottleneck3D, norm_layer=nn.BatchNorm3d, **kwargs) -> ResNet:
-    return ResNet3D(block, [3, 4, 6, 3], norm_layer=norm_layer, **kwargs)
 
 
 if __name__ == "__main__":

@@ -5,8 +5,8 @@ from torch.utils.data import DataLoader
 from data import transforms as T
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from backbone.resnets import resnet18_3d, resnet50_3d
-from data.oai import MOAKSDataset
+from backbone.resnets import resnet18_3d, resnet50_3d, Net1, Net2
+from data.oai import MOAKSDataset, MOAKSDatasetMultilabel
 import os
 import torch.nn.functional as F
 from collections import defaultdict, deque
@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--num_epochs", type=int, default=100)
     parser.add_argument("--num_workers", type=int, default=5)
-    parser.add_argument("--num_classes", type=int, deffault=2)
+    parser.add_argument("--num_classes", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--lr_drop_step", type=int, default=50)
@@ -38,6 +38,13 @@ def parse_args():
     parser.add_argument("--window", type=int, default=100)
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--log_dir", type=str, default="")
+    parser.add_argument(
+        "--data_dir", type=str, default="/scratch/htc/ashestak/oai/v00/inputs"
+    )
+    parser.add_argument(
+        "--anns_dir", type=str, default="/scratch/htc/ashestak/oai/v00/data/moaks"
+    )
+
     parser.add_argument("--output_dir", type=str, default="outputs/backbone")
     args = parser.parse_args()
     return args
@@ -48,17 +55,17 @@ class MixCriterion(nn.Module):
         super().__init__()
 
     def loss_labels(self, out, tgt):
-        loss = F.binary_cross_entropy_with_logits(out, tgt.float())
+        loss = F.cross_entropy(out, tgt.long())
         return loss
 
     def loss_boxes(self, out, tgt):
-        loss = F.l1_loss(out, tgt.flatten(1))
+        loss = F.l1_loss(out, tgt)
         return loss
 
     def forward(self, out, tgt):
         losses = {}
 
-        for key in ("labels",):
+        for key in ("labels", "boxes"):
 
             losses[key] = getattr(self, f"loss_{key}")(out[key], tgt[key])
 
@@ -67,7 +74,11 @@ class MixCriterion(nn.Module):
 
 def main(args):
 
-    root = "/scratch/htc/ashestak/oai/v00/"
+    root = Path(args.data_dir)
+    anns = Path(args.anns_dir)
+
+    assert root.exists(), "Provided data directory doesn't exist!"
+    assert anns.exists(), "Provided annotations directory doesn't exist!"
 
     train_transforms = T.Compose(
         [T.ToTensor(), T.RandomResizedBBoxSafeCrop(), T.Normalize()]
@@ -75,9 +86,9 @@ def main(args):
 
     val_transforms = T.Compose([T.ToTensor(), T.Normalize()])
 
-    dataset_train = MOAKSDataset(
-        os.path.join(root, "data/inputs"),
-        os.path.join(root, "moaks", "train.json"),
+    dataset_train = MOAKSDatasetMultilabel(
+        root,
+        anns / "train.json",
         transforms=train_transforms,
     )
     # limit number of training images
@@ -90,8 +101,8 @@ def main(args):
     )
 
     dataset_val = MOAKSDataset(
-        os.path.join(root, "data/inputs"),
-        os.path.join(root, "moaks", "val.json"),
+        root,
+        anns / "val.json",
         transforms=val_transforms,
     )
     # limit number of val images
@@ -104,7 +115,7 @@ def main(args):
     )
 
     device = torch.device(args.device)
-    model = resnet50_3d(num_classes=args.num_classes).to(device)
+    model = Net2("resnet50_3d", num_classes=args.num_classes).to(device)
     criterion = MixCriterion().to(device)
 
     # criterion = F.binary_cross_entropy_with_logits

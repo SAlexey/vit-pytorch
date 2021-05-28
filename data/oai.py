@@ -34,7 +34,10 @@ class DatasetBase(Dataset):
     """
 
     def __init__(
-        self, root, anns, transforms=None,
+        self,
+        root,
+        anns,
+        transforms=None,
     ):
         self.root = root
         with open(anns) as fh:
@@ -148,17 +151,15 @@ class MOAKSDatasetMultilabel(MOAKSDataset):
         tgt = super()._get_target(key)
         ann = self.anns[key]
         tgt["labels"] = [
-            [ann["V00MMTMA"], ann["V00MMTMB"], ann["V00MMTMP"],],
-            [ann["V00MMTLA"], ann["V00MMTLB"], ann["V00MMTLP"],],
+            [
+                ann["V00MMTMA"],
+                ann["V00MMTMB"],
+                ann["V00MMTMP"],
+            ],
+            [
+                ann["V00MMTLA"],
+                ann["V00MMTLB"],
+                ann["V00MMTLP"],
+            ],
         ]
         return tgt
-
-    def __getitem__(self, idx):
-        img, tgt = super().__getitem__(idx)
-
-        # convert labels to one-hot-vector
-
-        labels = tgt["labels"]
-        labels[labels==1] = 0 # ignore signal abnormalities
-        tgt["labels"] = F.one_hot(labels)
-        return img, tgt
