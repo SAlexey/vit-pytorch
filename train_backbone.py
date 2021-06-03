@@ -182,6 +182,8 @@ def main(args):
         total_steps = 0
 
         pos_weight = dataloader_train.dataset.pos_weight
+        if isinstance(pos_weight, torch.Tensor):
+            pos_weight = pos_weight.to(device)
         model.train()
 
         for step, (img, tgt) in enumerate(dataloader_train):
@@ -229,6 +231,8 @@ def main(args):
             total_steps = 0
 
             pos_weight = dataloader_val.dataset.pos_weight
+            if isinstance(pos_weight, torch.Tensor):
+                pos_weight = pos_weight.to(device)
 
             for step, (img, tgt) in enumerate(dataloader_val):
 
