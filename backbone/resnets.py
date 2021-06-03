@@ -325,14 +325,14 @@ class Net2(nn.Module):
 
         labels = E.rearrange(
             self.out_labels(x),
-            "1 (objs ls) -> 1 objs ls",
+            "_ (objs ls) -> _ objs ls",
             objs=self._num_objects,
             ls=self._num_labels,
         )
 
         boxes = E.rearrange(
             self.out_boxes(x).sigmoid(),
-            "1 (boxes coords) -> 1 boxes coords",
+            "_ (boxes coords) -> _ boxes coords",
             boxes=self._num_objects,
         )
 
