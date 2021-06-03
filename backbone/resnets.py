@@ -310,13 +310,13 @@ class Net2(nn.Module):
 
         self._num_objects = 2  # number of menisci (med, lat)
         self._num_labels = 3  # number of parts permeniscus (A.Horn, Body, P.Horn)
-        self._num_classes = 6  # number of classes per part (MOAKS)
+        self._num_classes = 1  # number of classes per part (MOAKS)
 
         self.out_boxes = MLP(num_channels, 2048, 12, 3)
         self.out_labels = MLP(
             num_channels,
             2048,
-            self._num_objects * self._num_labels * self._num_classes,
+            self._num_objects * self._num_labels,
             3,
         )
 
@@ -325,10 +325,9 @@ class Net2(nn.Module):
 
         labels = E.rearrange(
             self.out_labels(x),
-            "1 (cls objs ls) -> 1 cls objs ls",
+            "1 (objs ls) -> 1 objs ls",
             objs=self._num_objects,
             ls=self._num_labels,
-            cls=self._num_classes,
         )
 
         boxes = E.rearrange(

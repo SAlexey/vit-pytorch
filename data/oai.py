@@ -146,20 +146,53 @@ class MOAKSDataset(DatasetBase):
         return img, tgt
 
 
-class MOAKSDatasetMultilabel(MOAKSDataset):
+class MOAKSDatasetBinaryMultilabel(MOAKSDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        pos_weight = np.nan_to_num(
+            np.array(
+                [
+                    [
+                        ann["V00MMTMA"],
+                        ann["V00MMTMB"],
+                        ann["V00MMTMP"],
+                        ann["V00MMTLA"],
+                        ann["V00MMTLB"],
+                        ann["V00MMTLP"],
+                    ]
+                    if (ann["side"] == "right")
+                    else [
+                        ann["V00MMTLA"],
+                        ann["V00MMTLB"],
+                        ann["V00MMTLP"],
+                        ann["V00MMTMA"],
+                        ann["V00MMTMB"],
+                        ann["V00MMTMP"],
+                    ]
+                    for ann in self.anns.values()
+                ],
+                dtype=np.float,
+            )
+        )
+        count = pos_weight.shape[0]
+        pos_weight = (pos_weight > 1).sum(0)
+        pos_weight = (count - pos_weight) / pos_weight
+        self.pos_weight = torch.from_numpy(pos_weight.reshape(2, 3))
+
     def _get_target(self, key):
         tgt = super()._get_target(key)
         ann = self.anns[key]
         tgt["labels"] = [
             [
-                ann["V00MMTMA"],
-                ann["V00MMTMB"],
-                ann["V00MMTMP"],
+                int(ann["V00MMTMA"] > 1),
+                int(ann["V00MMTMB"] > 1),
+                int(ann["V00MMTMP"] > 1),
             ],
             [
-                ann["V00MMTLA"],
-                ann["V00MMTLB"],
-                ann["V00MMTLP"],
+                int(ann["V00MMTLA"] > 1),
+                int(ann["V00MMTLB"] > 1),
+                int(ann["V00MMTLP"] > 1),
             ],
         ]
         return tgt

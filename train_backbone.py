@@ -1,4 +1,5 @@
-#%%
+# %%
+
 import json
 import os
 from argparse import ArgumentParser
@@ -17,42 +18,10 @@ from tqdm import tqdm
 
 from backbone.resnets import Net1, Net2, resnet18_3d, resnet50_3d
 from data import transforms as T
-from data.oai import MOAKSDataset, MOAKSDatasetMultilabel
+from data.oai import MOAKSDataset, MOAKSDatasetBinaryMultilabel
 
-target = torch.empty(1, 2, 3).random_(2)
-print(target)
 
-logits = torch.randn_like(target)
-print(logits)
-
-loss = F.binary_cross_entropy_with_logits(logits, target)
-print(loss)
-
-with open("/scratch/visual/ashestak/oai/v00/data/moaks/train.json") as fh:
-    anns = json.load(fh)
-
-data = (
-    pd.DataFrame(
-        [
-            {
-                "V00MMTMA": a["V00MMTMA"],
-                "V00MMTMB": a["V00MMTMB"],
-                "V00MMTMP": a["V00MMTMP"],
-                "V00MMTLA": a["V00MMTLA"],
-                "V00MMTLB": a["V00MMTLB"],
-                "V00MMTLP": a["V00MMTLP"],
-            }
-            for a in anns.values()
-        ]
-    )
-    .fillna(0)
-    .replace(1, 0)
-)
-
-factor = (data > 0).astype(int).sum(0)
-factor = (data.count() - factor) / factor
-print(factor.values)
-#%%
+# %%
 
 
 def parse_args():
@@ -67,6 +36,12 @@ def parse_args():
     parser.add_argument("--lr_drop_rate", type=float, default=0.5)
     parser.add_argument(
         "--resume", type=str, default="", help="checkpoinnt path to resume from"
+    )
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        choices=("resnet18_3d", "resnet50_3d"),
+        default="resnet18_3d",
     )
     parser.add_argument(
         "--weights",
@@ -90,23 +65,27 @@ def parse_args():
 
 
 class MixCriterion(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         super().__init__()
 
-    def loss_labels(self, out, tgt):
-        loss = F.cross_entropy(out, tgt.long())
+    def loss_labels(self, out, tgt, label_pos_weight=None):
+        loss = F.binary_cross_entropy_with_logits(out, tgt, pos_weight=label_pos_weight)
         return loss
 
     def loss_boxes(self, out, tgt):
         loss = F.l1_loss(out, tgt)
         return loss
 
-    def forward(self, out, tgt):
+    def forward(self, out, tgt, label_pos_weight=None):
         losses = {}
+        kwargs = {"labels": {"label_pos_weight": label_pos_weight}}
 
         for key in ("labels", "boxes"):
-
-            losses[key] = getattr(self, f"loss_{key}")(out[key], tgt[key])
+            loss_func = getattr(self, f"loss_{key}")
+            loss_kwargs = kwargs.get(key, dict())
+            losses[key] = loss_func(out[key], tgt[key], **loss_kwargs)
 
         return losses
 
@@ -125,7 +104,7 @@ def main(args):
 
     val_transforms = T.Compose([T.ToTensor(), T.Normalize()])
 
-    dataset_train = MOAKSDatasetMultilabel(
+    dataset_train = MOAKSDatasetBinaryMultilabel(
         root,
         anns / "train.json",
         transforms=train_transforms,
@@ -139,7 +118,7 @@ def main(args):
         num_workers=args.num_workers,
     )
 
-    dataset_val = MOAKSDataset(
+    dataset_val = MOAKSDatasetBinaryMultilabel(
         root,
         anns / "val.json",
         transforms=val_transforms,
@@ -155,7 +134,7 @@ def main(args):
 
     device = torch.device(args.device)
     # TODO:  better network initializationwith args
-    model = Net2("resnet50_3d", dropout=args.dropout).to(device)
+    model = Net2(args.backbone, dropout=args.dropout).to(device)
     criterion = MixCriterion().to(device)
 
     # criterion = F.binary_cross_entropy_with_logits
@@ -191,7 +170,7 @@ def main(args):
 
     best_val_loss = np.inf
 
-    weight_dict = {"labels": 1}
+    weight_dict = {"labels": 1, "boxes": 5}
 
     train_steps = ceil(len(dataset_train) / dataloader_train.batch_size)
     val_steps = ceil(len(dataset_val) / dataloader_val.batch_size)
@@ -203,18 +182,23 @@ def main(args):
         total_loss = 0
         total_steps = 0
 
+        pos_weight = dataloader_train.dataset.pos_weight
         model.train()
 
         for step, (img, tgt) in enumerate(dataloader_train):
 
             img = img.to(device)
-            tgt = {k: v.to(device) for k, v in tgt.items()}
+            tgt = {k: v.to(device).float() for k, v in tgt.items()}
 
             global_step = step + epoch * train_steps
 
             out = model(img)
 
-            loss_dict = criterion(out, tgt)
+            loss_dict = criterion(
+                out,
+                tgt,
+                label_pos_weight=pos_weight,
+            )
             loss = sum(weight_dict[k] * loss_dict[k] for k in weight_dict)
 
             optimizer.zero_grad()
@@ -245,16 +229,22 @@ def main(args):
             total_loss = 0
             total_steps = 0
 
+            pos_weight = dataloader_val.dataset.pos_weight
+
             for step, (img, tgt) in enumerate(dataloader_val):
 
                 img = img.to(device)
-                tgt = {k: v.to(device) for k, v in tgt.items()}
+                tgt = {k: v.to(device).float() for k, v in tgt.items()}
 
                 global_step = step + epoch * val_steps
 
                 out = model(img)
 
-                loss_dict = criterion(out, tgt)
+                loss_dict = criterion(
+                    out,
+                    tgt,
+                    label_pos_weight=pos_weight,
+                )
                 loss_value = sum(weight_dict[k] * loss_dict[k] for k in weight_dict)
 
                 total_loss += loss_value
@@ -287,3 +277,5 @@ def main(args):
 if __name__ == "__main__":
     args = parse_args()
     main(args)
+
+# %%
