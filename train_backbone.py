@@ -184,7 +184,7 @@ def main(args):
 
         pos_weight = dataloader_train.dataset.pos_weight
         if isinstance(pos_weight, torch.Tensor):
-            pos_weight = label_pos_weight.to(device)
+            pos_weight = pos_weight.to(device)
         model.train()
 
         for step, (img, tgt) in enumerate(dataloader_train):

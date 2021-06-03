@@ -185,14 +185,14 @@ class MOAKSDatasetBinaryMultilabel(MOAKSDataset):
         ann = self.anns[key]
         tgt["labels"] = [
             [
-                int(ann["V00MMTMA"] > 1),
-                int(ann["V00MMTMB"] > 1),
-                int(ann["V00MMTMP"] > 1),
+                int(ann.get("V00MMTMA", 0) > 1),
+                int(ann.get("V00MMTMB", 0) > 1),
+                int(ann.get("V00MMTMP", 0) > 1),
             ],
             [
-                int(ann["V00MMTLA"] > 1),
-                int(ann["V00MMTLB"] > 1),
-                int(ann["V00MMTLP"] > 1),
+                int(ann.get("V00MMTLA", 0) > 1),
+                int(ann.get("V00MMTLB", 0) > 1),
+                int(ann.get("V00MMTLP", 0) > 1),
             ],
         ]
         return tgt
