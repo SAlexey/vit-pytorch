@@ -13,23 +13,24 @@ from data import transforms as T
 from data.oai import MOAKSDataset
 from util.box_ops import box_cxcywh_to_xyxy, box_iou
 
-
 #%%
 
 
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument(
-        "--data_root", type=str, default="/scratch/htc/ashestak/oai/v00/data"
+        "--data_dir", type=str, default="/scratch/visual/ashestak/oai/v00/data/inputs"
     )
     parser.add_argument(
-        "--anns", type=str, default="/scratch/htc/ashestak/oai/v00/data/moaks/test.json"
+        "--anns",
+        type=str,
+        default="/scratch/visual/ashestak/oai/v00/data/moaks/test.json",
     )
     parser.add_argument(
         "--model", type=str, required=True, choices=("resnet18_3d", "resnet50_3d")
     )
-    parser.add_argument("--output_dir", type=str)
-    parser.add_argument("--weights", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="")
+    parser.add_argument("--state_dict", type=str, required=True)
     return parser.parse_args()
 
 
@@ -43,33 +44,30 @@ def main(args):
 
     assert args.model in MODELS, f"Unknown model '{args.model}'"
 
-    model = MODELS.get(args.model)
-
-    state_dict = torch.load(args.weights)
-    model.load_state_dict(state_dict)
-    model.eval()
-
     anns = Path(args.anns)
-    root = Path(args.data_root)
+    root = Path(args.data_dir)
+    output_dir = Path(args.output_dir)
+    state_dict = Path(args.state_dict)
 
     assert anns.exists(), "Provided path for annotations does not exist!"
     assert root.exists(), "Provided path for data does not exist!"
 
-    transforms = T.Compose((T.ToTensor(), T.Normalize(target=False)))
+    if not args.output_dir:
+        output_dir = state_dict.parent / "test"
+
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    model = MODELS.get(args.model)
+    state_dict = torch.load(state_dict)
+    model.load_state_dict(state_dict)
+    model.eval()
+
+    transforms = T.Compose((T.ToTensor(), T.Normalize()))
 
     data = MOAKSDataset(root, anns, transforms=transforms)
 
     loader = DataLoader(data, batch_size=1, num_workers=2)
-
-    output_dir = args.output_dir
-
-    if not output_dir:
-        output_dir = f"./outputs/{args.model}/test"
-
-    output_dir = Path(output_dir)
-
-    if not output_dir.exists():
-        output_dir.mkdir(parents=True, exist_ok=True)
 
     image_ids = []
     scale_fct = []
@@ -90,9 +88,12 @@ def main(args):
             tgt_cls = tgt["labels"]
             tgt_ids = tgt["image_id"]
 
-            fct = torch.as_tensor(img.shape[-3:])
-
-            fct = repeat(fct, "shape -> bs (repeat shape)", bs=1, repeat=2)
+            fct = repeat(
+                torch.as_tensor(img.shape[-3:]),
+                "shape -> bs (repeat shape)",
+                bs=1,
+                repeat=2,
+            )
 
             obj_shape = parse_shape(tgt_box, "batch objects coord")
 
@@ -113,16 +114,29 @@ def main(args):
             class_tgt.append(tgt_cls)
             boxes_out.append(out_box)
             boxes_tgt.append(tgt_box)
+            scale_fct.append(fct)
 
     boxes_out = rearrange(boxes_out, "list objects coord -> (list objects) coord")
     boxes_tgt = rearrange(boxes_tgt, "list objects coord -> (list objects) coord")
     class_out = rearrange(class_out, "list objects class -> (list objects) class")
     class_tgt = rearrange(class_tgt, "list objects class -> (list objects) class")
     image_ids = rearrange(image_ids, "list ids -> (list ids)")
+    scale_fct = rearrange(scale_fct, "list fct -> (list fct")
 
-    np.save("outputs/test_results/boxes_out.npy", boxes_out.numpy())
-    np.save("outputs/test_results/boxes_tgt.npy", boxes_tgt.numpy())
+    boxes_xyxy_out = box_cxcywh_to_xyxy(boxes_out)
+    boxes_xyxy_tgt = box_cxcywh_to_xyxy(boxes_tgt)
+
+    boxes_iou = box_iou(boxes_xyxy_out, boxes_xyxy_tgt).diag()
+
+    boxes_xyxy_out = boxes_xyxy_out * scale_fct
+    boxes_xyxy_tgt = boxes_xyxy_tgt * scale_fct
+
+    np.save("outputs/test_results/boxes_out.npy", boxes_xyxy_out.numpy())
+    np.save("outputs/test_results/boxes_tgt.npy", boxes_xyxy_tgt.numpy())
+    np.save("outputs/test_results/boxes_iou.npy", boxes_iou.numpy())
     np.save("outputs/test_results/image_ids.npy", image_ids.numpy())
+    np.save("outputs/test_results/class_tgt.npy", class_tgt.numpy())
+    np.save("outputs/test_results/class_out.npy", class_out.numpy())
 
     sys.exit(1)
 
