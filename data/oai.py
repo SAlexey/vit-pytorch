@@ -168,19 +168,19 @@ class MOAKSDatasetBinaryMultilabel(MOAKSDataset):
                             ann["V00MMTLB"],
                             ann["V00MMTLP"],
                         ],
-                    ]
+                    ],
+                    dtype=np.float,
                 ),
-                dtype=np.float,
             )
 
             if ann["side"] == "left":
-                pos_weight.append(np.flip(labels, 0))
+                pos_weight.append(np.flip(labels, 0).flatten())
             else:
-                pos_weight.append(labels)
+                pos_weight.append(labels.flatten())
 
-            ann["labels"] = labels
+            ann["labels"] = (labels > 1).astype(float)
 
-        pos_weight = np.concatenate(pos_weight)
+        pos_weight = np.vstack(pos_weight)
         count = pos_weight.shape[0]
         pos_weight = (pos_weight > 1).sum(0)
         pos_weight = (count - pos_weight) / pos_weight
