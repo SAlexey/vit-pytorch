@@ -1,19 +1,58 @@
+#%%
+import json
+import os
+from argparse import ArgumentParser
+from collections import defaultdict, deque
+from math import ceil
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
-from data import transforms as T
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from backbone.resnets import resnet18_3d, resnet50_3d, Net1, Net2
+
+from backbone.resnets import Net1, Net2, resnet18_3d, resnet50_3d
+from data import transforms as T
 from data.oai import MOAKSDataset, MOAKSDatasetMultilabel
-import os
-import torch.nn.functional as F
-from collections import defaultdict, deque
-from argparse import ArgumentParser
-from pathlib import Path
-import json
-from math import ceil
+
+target = torch.empty(1, 2, 3).random_(2)
+print(target)
+
+logits = torch.randn_like(target)
+print(logits)
+
+loss = F.binary_cross_entropy_with_logits(logits, target)
+print(loss)
+
+with open("/scratch/visual/ashestak/oai/v00/data/moaks/train.json") as fh:
+    anns = json.load(fh)
+
+data = (
+    pd.DataFrame(
+        [
+            {
+                "V00MMTMA": a["V00MMTMA"],
+                "V00MMTMB": a["V00MMTMB"],
+                "V00MMTMP": a["V00MMTMP"],
+                "V00MMTLA": a["V00MMTLA"],
+                "V00MMTLB": a["V00MMTLB"],
+                "V00MMTLP": a["V00MMTLP"],
+            }
+            for a in anns.values()
+        ]
+    )
+    .fillna(0)
+    .replace(1, 0)
+)
+
+factor = (data > 0).astype(int).sum(0)
+factor = (data.count() - factor) / factor
+print(factor.values)
+#%%
 
 
 def parse_args():
