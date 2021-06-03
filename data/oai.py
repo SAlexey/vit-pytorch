@@ -150,31 +150,37 @@ class MOAKSDatasetBinaryMultilabel(MOAKSDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        pos_weight = np.nan_to_num(
-            np.array(
-                [
+        pos_weight = []
+
+        for key in self.keys:
+            ann = self.anns[key]
+
+            labels = np.nan_to_num(
+                np.array(
                     [
-                        ann["V00MMTMA"],
-                        ann["V00MMTMB"],
-                        ann["V00MMTMP"],
-                        ann["V00MMTLA"],
-                        ann["V00MMTLB"],
-                        ann["V00MMTLP"],
+                        [
+                            ann["V00MMTMA"],
+                            ann["V00MMTMB"],
+                            ann["V00MMTMP"],
+                        ],
+                        [
+                            ann["V00MMTLA"],
+                            ann["V00MMTLB"],
+                            ann["V00MMTLP"],
+                        ],
                     ]
-                    if (ann["side"] == "right")
-                    else [
-                        ann["V00MMTLA"],
-                        ann["V00MMTLB"],
-                        ann["V00MMTLP"],
-                        ann["V00MMTMA"],
-                        ann["V00MMTMB"],
-                        ann["V00MMTMP"],
-                    ]
-                    for ann in self.anns.values()
-                ],
+                ),
                 dtype=np.float,
             )
-        )
+
+            if ann["side"] == "left":
+                pos_weight.append(np.flip(labels, 0))
+            else:
+                pos_weight.append(labels)
+
+            ann["labels"] = labels
+
+        pos_weight = np.concatenate(pos_weight)
         count = pos_weight.shape[0]
         pos_weight = (pos_weight > 1).sum(0)
         pos_weight = (count - pos_weight) / pos_weight
@@ -183,16 +189,5 @@ class MOAKSDatasetBinaryMultilabel(MOAKSDataset):
     def _get_target(self, key):
         tgt = super()._get_target(key)
         ann = self.anns[key]
-        tgt["labels"] = [
-            [
-                int(ann["V00MMTMA"] > 1),
-                int(ann["V00MMTMB"] > 1),
-                int(ann["V00MMTMP"] > 1),
-            ],
-            [
-                int(ann["V00MMTLA"] > 1),
-                int(ann["V00MMTLB"] > 1),
-                int(ann["V00MMTLP"] > 1),
-            ],
-        ]
+        tgt["labels"] = ann["labels"]
         return tgt

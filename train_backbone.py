@@ -133,7 +133,6 @@ def main(args):
     )
 
     device = torch.device(args.device)
-    # TODO:  better network initializationwith args
     model = Net2(args.backbone, dropout=args.dropout).to(device)
     criterion = MixCriterion().to(device)
 
